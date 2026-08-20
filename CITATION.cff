@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "Group-Specific Amino Acid Finder"
+type: software
+version: 0.1.0
+date-released: 2026-08-20
+authors:
+  - family-names: Hassen
+    given-names: Umaimah Mohammed
+repository-code: "https://github.com/umaimahmohammed-cpu/group-specific-amino-acid-finder"
+url: "https://group-specific-amino-acid-finder.umm99.chatgpt.site"
+license: MIT
+abstract: >-
+  A browser-based, rule-driven tool for identifying group-exclusive or
+  group-associated amino acid residues in aligned protein FASTA sequences.
+keywords:
+  - amino acid substitutions
+  - protein alignment
+  - comparative genomics
+  - group-specific residues
+  - Helicobacter pylori
+
