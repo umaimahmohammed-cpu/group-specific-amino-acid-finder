@@ -1,0 +1,116 @@
+"use client";
+
+import { useMemo, useState } from "react";
+
+type Seq = { id:string; sequence:string };
+type Hit = {
+  alignmentPosition:number; targetPosition:number|null; targetReferenceAA:string;
+  referencePosition:number|null; referenceAA:string; targetAA:string; comparisonAAs:string;
+  targetPresent:number; targetTotal:number; comparisonMatches:number; comparisonTotal:number;
+};
+type Summary = { sequences:number; target:number; comparison:number; length:number; requested:number; found:number; missing:string[] };
+
+const demoFasta=`>Hardy_CAN-006
+MKKAILVGA-DVAKY
+>Hardy_CAN-011
+MKKAILVGA-DVAKY
+>Hardy_CHI-105
+MKKAILVGA-DVAKY
+>Ubiq_26695
+MKKVILVGA-EVARY
+>Ubiq_J99
+MKKVILVGA-EVARY
+>Ubiq_G27
+MKKVILVGA-EVARY`;
+const defaultHardyIdentifiers=`CAN-006
+CAN-007
+CAN-010
+CAN-011
+CAN-015
+CAN-016
+CAN-018
+CAN-019
+CHI-105
+CHI-116`;
+const demoIdentifiers=`CAN-006
+CAN-011
+CHI-105
+NOT-IN-FASTA`;
+
+function parseFasta(text:string):Seq[]{
+  const records:Seq[]=[];let id="",sequence="";
+  for(const raw of text.split(/\r?\n/)){const line=raw.trim();if(!line)continue;if(line.startsWith(">")){if(id)records.push({id,sequence:sequence.toUpperCase()});id=line.slice(1).trim().split(/\s+/)[0];sequence="";}else{if(!id)throw new Error("The FASTA must begin with a >sequence header.");sequence+=line.replace(/\s/g,"");}}
+  if(id)records.push({id,sequence:sequence.toUpperCase()});if(!records.length)throw new Error("No FASTA sequences were found.");
+  const length=records[0].sequence.length;if(records.some(r=>r.sequence.length!==length))throw new Error("Sequences have different lengths. Please upload an aligned protein FASTA.");
+  if(new Set(records.map(r=>r.id)).size!==records.length)throw new Error("FASTA sequence IDs must be unique.");return records;
+}
+function parseIdentifiers(text:string):string[]{
+  const ids=text.split(/[\n,;\t]+/).map(x=>x.trim()).filter(Boolean).filter(x=>! /^(sequence_?id|id|sample|identifier)$/i.test(x));
+  if(!ids.length)throw new Error("Add at least one identifier for the tested group.");return [...new Set(ids)];
+}
+function matches(id:string,identifier:string){return id.toLowerCase().includes(identifier.toLowerCase());}
+function coordinates(sequence:string){let n=0;return [...sequence].map(aa=>{if(aa!=="-")n++;return aa==="-"?null:n;});}
+function readFile(file:File,setter:(value:string)=>void){const reader=new FileReader();reader.onload=()=>setter(String(reader.result??""));reader.readAsText(file);}
+
+export default function Home(){
+  const [fasta,setFasta]=useState(""),[targetIdentifiers,setTargetIdentifiers]=useState(defaultHardyIdentifiers),[targetName,setTargetName]=useState("Hardy");
+  const [targetReferenceId,setTargetReferenceId]=useState(""),[referenceId,setReferenceId]=useState(""),[threshold,setThreshold]=useState(100),[allowedComparisonMatches,setAllowedComparisonMatches]=useState(0);
+  const [hits,setHits]=useState<Hit[]|null>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
+  const [summary,setSummary]=useState<Summary>({sequences:0,target:0,comparison:0,length:0,requested:0,found:0,missing:[]});
+
+  const parsed=useMemo(()=>{try{return parseFasta(fasta)}catch{return[]}},[fasta]);
+  const identifiers=useMemo(()=>{try{return parseIdentifiers(targetIdentifiers)}catch{return[]}},[targetIdentifiers]);
+  const foundIdentifiers=useMemo(()=>identifiers.filter(identifier=>parsed.some(r=>matches(r.id,identifier))),[identifiers,parsed]);
+  const missingIdentifiers=useMemo(()=>identifiers.filter(identifier=>!parsed.some(r=>matches(r.id,identifier))),[identifiers,parsed]);
+  const targetCandidates=useMemo(()=>parsed.filter(r=>identifiers.some(identifier=>matches(r.id,identifier))),[parsed,identifiers]);
+  const targetCandidateIds=new Set(targetCandidates.map(r=>r.id));
+  const comparisonCandidates=parsed.filter(r=>!targetCandidateIds.has(r.id));
+  const visibleHits=(hits??[]).filter(h=>{const term=query.trim().toUpperCase();return !term||String(h.alignmentPosition).includes(term)||String(h.targetPosition??"").includes(term)||String(h.referencePosition??"").includes(term)||h.targetAA.includes(term)||h.comparisonAAs.includes(term)});
+
+  function analyse(){
+    try{
+      const records=parseFasta(fasta),ids=parseIdentifiers(targetIdentifiers);
+      const found=ids.filter(identifier=>records.some(r=>matches(r.id,identifier))),missing=ids.filter(identifier=>!records.some(r=>matches(r.id,identifier)));
+      const target=records.filter(r=>ids.some(identifier=>matches(r.id,identifier))),targetIds=new Set(target.map(r=>r.id)),comparison=records.filter(r=>!targetIds.has(r.id));
+      if(!target.length)throw new Error(`None of the ${ids.length} identifiers matched a FASTA sequence.`);if(!comparison.length)throw new Error("Every sequence matched the tested group. At least one comparison sequence is required.");
+      const targetRef=target.find(r=>r.id===targetReferenceId)??target[0],reference=comparison.find(r=>r.id===referenceId)??comparison[0];
+      const targetCoords=coordinates(targetRef.sequence),referenceCoords=coordinates(reference.sequence),foundHits:Hit[]=[];
+      for(let index=0;index<records[0].sequence.length;index++){
+        const counts=new Map<string,number>();for(const record of target){const aa=record.sequence[index];if(aa!=="-"&&aa!=="X")counts.set(aa,(counts.get(aa)??0)+1);}
+        const ranked=[...counts.entries()].sort((a,b)=>b[1]-a[1]);if(!ranked.length)continue;const [targetAA,targetPresent]=ranked[0];
+        if((targetPresent/target.length)*100+1e-9<threshold)continue;
+        const comparisonResidues=new Set(comparison.map(r=>r.sequence[index]));
+        const comparisonMatches=comparison.filter(r=>r.sequence[index]===targetAA).length;if(comparisonMatches>allowedComparisonMatches)continue;
+        foundHits.push({alignmentPosition:index+1,targetPosition:targetCoords[index],targetReferenceAA:targetRef.sequence[index],referencePosition:referenceCoords[index],referenceAA:reference.sequence[index],targetAA,comparisonAAs:[...comparisonResidues].sort().join(", "),targetPresent,targetTotal:target.length,comparisonMatches,comparisonTotal:comparison.length});
+      }
+      setHits(foundHits);setSummary({sequences:records.length,target:target.length,comparison:comparison.length,length:records[0].sequence.length,requested:ids.length,found:found.length,missing});
+      setTargetReferenceId(targetRef.id);setReferenceId(reference.id);setError("");
+    }catch(problem){setError(problem instanceof Error?problem.message:"The files could not be analysed.");setHits(null);}
+  }
+  function loadDemo(){setFasta(demoFasta);setTargetIdentifiers(demoIdentifiers);setTargetName("Hardy");setTargetReferenceId("Hardy_CAN-006");setReferenceId("Ubiq_26695");setThreshold(100);setAllowedComparisonMatches(0);setHits(null);setError("");}
+  function downloadCsv(){if(!hits)return;const header="alignment_position,tested_reference_position,tested_reference_aa,comparison_reference_position,comparison_reference_aa,group_aa,other_aas,group_present,group_total,comparison_matches,comparison_total,threshold_percent,max_comparison_matches_allowed";const rows=hits.map(h=>[h.alignmentPosition,h.targetPosition??"gap",h.targetReferenceAA,h.referencePosition??"gap",h.referenceAA,h.targetAA,`"${h.comparisonAAs}"`,h.targetPresent,h.targetTotal,h.comparisonMatches,h.comparisonTotal,threshold,allowedComparisonMatches].join(","));const url=URL.createObjectURL(new Blob([[header,...rows].join("\n")],{type:"text/csv"})),anchor=document.createElement("a");anchor.href=url;anchor.download=`${targetName.toLowerCase().replace(/\W+/g,"-")}-${threshold}-percent-${allowedComparisonMatches===0?"exclusive":"associated"}-substitutions.csv`;anchor.click();URL.revokeObjectURL(url);}
+
+  return <main>
+    <header className="hero"><nav><span className="brand"><span className="mark">AA</span> Specificity Finder</span><span className="privacy">Runs locally in your browser</span></nav><div className="heroCopy"><p className="eyebrow">COMPARATIVE PROTEIN ANALYSIS</p><h1>Find the residues that<br/><em>define a group.</em></h1><p className="intro">Identify the strains being tested, choose the required prevalence, and compare their amino acids against every remaining sequence.</p><button className="textButton" onClick={loadDemo}>Try the example dataset <span>→</span></button></div></header>
+    <section className="workspace"><div className="stepTitle"><span>01</span><div><h2>Add your alignment</h2><p>Upload a protein FASTA in which all sequences are already aligned.</p></div></div><div className="uploadSingle"><label className={`dropzone ${fasta?"filled":""}`}><input type="file" accept=".fa,.faa,.fasta,.fas,.aln,.txt" onChange={e=>e.target.files?.[0]&&readFile(e.target.files[0],setFasta)}/><span className="fileIcon">{fasta?"✓":">_"}</span><strong>{fasta?"Aligned FASTA loaded":"Aligned protein FASTA"}</strong><small>{fasta?`${parsed.length} sequences detected`:".faa, .fasta, .fa or .txt"}</small></label></div>
+      <div className="stepTitle second"><span>02</span><div><h2>Identify the group being tested</h2><p>Missing names will be reported but will not stop the analysis.</p></div></div>
+      <div className="targetSetup expanded"><label>Group name<input value={targetName} onChange={e=>setTargetName(e.target.value)}/></label><label className="identifiers">Tested identifiers — one per line<textarea value={targetIdentifiers} onChange={e=>setTargetIdentifiers(e.target.value)} rows={10}/><small>Partial strain names are accepted. For example, CAN-006 matches its complete protein header.</small></label><label>Required prevalence<select value={threshold} onChange={e=>setThreshold(Number(e.target.value))}><option value={100}>100% of tested group</option><option value={95}>At least 95%</option><option value={85}>At least 85%</option></select></label><label>Maximum comparison matches allowed<select value={allowedComparisonMatches} onChange={e=>setAllowedComparisonMatches(Number(e.target.value))}><option value={0}>0 strains — strictly exclusive</option><option value={1}>Up to 1 strain</option><option value={2}>Up to 2 strains</option></select><small>Allow rare exceptions in the Ubiquitous/comparison group.</small></label></div>
+      {fasta&&identifiers.length>0&&<div className={`matchStatus ${foundIdentifiers.length?"ok":"bad"}`}><b>{foundIdentifiers.length} of {identifiers.length} identifiers found</b><span>{targetCandidates.length} FASTA sequence{targetCandidates.length===1?"":"s"} assigned to {targetName}; {missingIdentifiers.length} identifier{missingIdentifiers.length===1?"":"s"} not found.</span>{missingIdentifiers.length>0&&<details><summary>Show missing identifiers</summary><p>{missingIdentifiers.join(", ")}</p></details>}</div>}
+      <div className="stepTitle second"><span>03</span><div><h2>Choose numbering strains</h2><p>Results will show coordinates in both selected sequences.</p></div></div><div className="numberingGrid"><label>Tested-group numbering strain<select value={targetReferenceId} onChange={e=>setTargetReferenceId(e.target.value)}><option value="">First matched tested sequence</option>{targetCandidates.map(r=><option key={r.id}>{r.id}</option>)}</select><small>Example: CAN-006 for TonB2 numbering.</small></label><label>Comparison/reference numbering strain<select value={referenceId} onChange={e=>setReferenceId(e.target.value)}><option value="">First sequence outside tested group</option>{comparisonCandidates.map(r=><option key={r.id}>{r.id}</option>)}</select><small>Example: strain 26695 for reference numbering.</small></label></div>
+      <div className="autoCompare"><span>AUTOMATIC COMPARISON</span><p><b>{targetName}:</b> sequences matching a listed identifier. <b>Everything else:</b> all remaining FASTA sequences.</p></div><div className="rule"><span>DETECTION RULE</span><p>The group residue must occur in <b>at least {threshold}% of tested sequences</b> and in <b>no more than {allowedComparisonMatches} comparison {allowedComparisonMatches===1?"sequence":"sequences"}</b>. Gaps and unknown residues cannot define the tested group.</p></div>{error&&<div className="error" role="alert">{error}</div>}<button className="analyse" disabled={!fasta||!targetIdentifiers.trim()} onClick={analyse}>Find {targetName}-{allowedComparisonMatches===0?"exclusive":"associated"} residues <span>→</span></button>
+    </section>
+    {hits!==null&&<section className="results"><div className="resultsHead"><div><p className="eyebrow">RESULTS · {threshold}% THRESHOLD · MAX {allowedComparisonMatches} COMPARISON {allowedComparisonMatches===1?"MATCH":"MATCHES"}</p><h2>{hits.length} {targetName}-{allowedComparisonMatches===0?"exclusive":"associated"} {hits.length===1?"position":"positions"}</h2><p>{summary.target} tested · {summary.comparison} comparison · {summary.found}/{summary.requested} identifiers found</p></div><button className="download" onClick={downloadCsv}>Download CSV ↓</button></div>
+      {summary.missing.length>0&&<div className="resultsNotice"><b>Analysis completed with {summary.missing.length} unmatched identifier{summary.missing.length===1?"":"s"}.</b> Only the {summary.target} matched FASTA sequences were used as {targetName}.</div>}
+      <div className="referencePair"><div><span>Tested-group numbering</span><b>{targetReferenceId}</b></div><div><span>Comparison numbering</span><b>{referenceId}</b></div></div>
+      <div className="metrics"><div><b>{summary.sequences}</b><span>total sequences</span></div><div><b>{summary.target}</b><span>{targetName} sequences</span></div><div><b>{summary.comparison}</b><span>comparison sequences</span></div><div><b>{threshold}%</b><span>prevalence · max {allowedComparisonMatches} comparison</span></div></div>
+      {hits.length?<><div className="tableTools"><label>Filter results<input placeholder="Position or amino acid" value={query} onChange={e=>setQuery(e.target.value)}/></label><span>{visibleHits.length} shown</span></div><div className="tableWrap"><table><thead><tr><th>Alignment</th><th>Tested ref pos.</th><th>Tested ref AA</th><th>Comparison ref pos.</th><th>Comparison ref AA</th><th>{targetName} AA</th><th>Other AA(s)</th><th>Evidence</th></tr></thead><tbody>{visibleHits.map(h=><tr key={h.alignmentPosition}><td>{h.alignmentPosition}</td><td>{h.targetPosition??"Gap"}</td><td><span className="aa neutral">{h.targetReferenceAA}</span></td><td>{h.referencePosition??"Gap"}</td><td><span className="aa neutral">{h.referenceAA}</span></td><td><span className="aa target">{h.targetAA}</span></td><td><span className="aa comparison">{h.comparisonAAs}</span></td><td>{h.targetPresent}/{h.targetTotal} ({Math.round(h.targetPresent/h.targetTotal*100)}%); {h.comparisonMatches}/{h.comparisonTotal} comparison</td></tr>)}</tbody></table></div></>:<div className="empty"><b>No residues passed the selected rule.</b><p>Try a lower prevalence threshold, allow one or two comparison matches, or inspect the unmatched identifiers.</p></div>}
+    </section>}
+    <section className="methods"><div className="methodsIntro"><p className="eyebrow">METHOD & VALIDATION</p><h2>Transparent, rule-based analysis.</h2><p>This tool counts residues directly at every position in an aligned protein FASTA. It does not use artificial intelligence to interpret or change results, and analysis runs locally in the browser.</p></div>
+      <div className="definitionGrid"><article><span>01</span><h3>Hardy-exclusive</h3><p>The selected residue meets the Hardy prevalence threshold and occurs in zero comparison sequences.</p></article><article><span>02</span><h3>Hardy-associated</h3><p>The residue meets the Hardy prevalence threshold and occurs in no more than one or two comparison sequences, according to the selected limit.</p></article><article><span>03</span><h3>Prevalence</h3><p>100% requires every tested sequence. With ten tested strains, 95% also requires 10/10, while 85% requires at least 9/10.</p></article><article><span>04</span><h3>Coordinates</h3><p>Alignment positions are translated into the separately selected tested-group and comparison reference coordinates.</p></article></div>
+      <div className="validation"><h3>Validation checks</h3><ul><li>A residue present in 10/10 tested and 0 comparison sequences is retained at the strict 100% setting.</li><li>A residue present in 9/10 tested sequences is retained at 85%, but not at 95% or 100%.</li><li>A residue shared by one comparison strain is excluded at zero allowed matches and retained when one match is allowed.</li><li>Missing identifiers are reported without stopping analysis when other listed strains are found.</li></ul></div>
+      <aside className="disclaimer"><b>Input requirement</b><p>The FASTA must contain protein sequences that have already been aligned and therefore have equal alignment length. This tool does not perform sequence alignment. Results depend on alignment quality, correct strain identifiers, group definition and selected thresholds, and should be checked before biological interpretation.</p></aside>
+      <p className="credit">Developed by <b>Umaimah Mohammed Hassen</b> as part of an MSc project in Molecular Biology at the University of Gothenburg, 2026.</p>
+    </section>
+    <footer><span>AA Specificity Finder</span><p>Transparent comparative protein analysis across complete alignments.</p></footer>
+  </main>;
+}
