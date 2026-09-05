@@ -22,7 +22,6 @@ Users can:
 - review unmatched identifiers without stopping the analysis; and
 - export results as CSV.
 
-All analysis runs locally in the browser. Uploaded sequences are not sent to an AI model.
 
 ## Scientific definitions
 
