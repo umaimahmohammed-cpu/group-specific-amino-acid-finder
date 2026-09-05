@@ -2,7 +2,7 @@
 
 A browser-based, rule-driven tool for identifying group-exclusive or group-associated amino acid residues in an aligned protein FASTA.
 
-**Live application:** https://group-specific-amino-acid-finder.umm99.chatgpt.site
+**Live application:** https://group-specific-amino-acid-finder-one.vercel.app
 
 Developed by **Umaimah Mohammed Hassen** as part of an MSc project in Molecular Biology at the University of Gothenburg (2026).
 
@@ -15,8 +15,10 @@ Users can:
 - upload an aligned protein FASTA;
 - paste the identifiers belonging to the tested group;
 - require 100%, 95%, or 85% prevalence in the tested group;
-- allow zero, one, or two matching comparison sequences;
+- set comparison tolerance either by strain count or by percentage;
 - select separate tested-group and comparison strains for residue numbering;
+- optionally add protein-domain coordinates and view them on a protein map;
+- inspect individual hits in a linked detail panel;
 - review unmatched identifiers without stopping the analysis; and
 - export results as CSV.
 
@@ -25,7 +27,8 @@ All analysis runs locally in the browser. Uploaded sequences are not sent to an 
 ## Scientific definitions
 
 - **Group-exclusive:** the residue meets the chosen tested-group prevalence threshold and occurs in zero comparison sequences.
-- **Group-associated:** the residue meets the chosen tested-group prevalence threshold and occurs in no more than one or two comparison sequences, depending on the selected limit.
+- **Group-associated:** the residue meets the chosen tested-group prevalence threshold and occurs in no more than the selected comparison tolerance.
+- **Comparison tolerance:** the maximum allowed prevalence of the tested-group residue in the comparison group, set either as a strain count or percentage.
 - **Prevalence:** the number of tested sequences containing the most frequent valid residue at an alignment position divided by the total number of tested sequences.
 - **Valid defining residue:** gaps (`-`) and unknown residues (`X`) cannot define the tested group.
 
@@ -40,6 +43,8 @@ Tested-group identifiers are entered one per line. Partial identifiers are accep
 ## Interpreting results
 
 Each result reports alignment position; coordinates and residues in the selected tested-group and comparison numbering strains; the tested-group residue and prevalence; residues in the comparison group; and the exact number of comparison sequences sharing the tested-group residue.
+
+The optional protein map places detected substitutions along the tested-group reference sequence and can overlay user-supplied domain coordinates. Selecting a hit in the map or table opens its detail view.
 
 Results depend on alignment quality, strain identification, group definition, sampling, and selected thresholds. They should be checked before biological interpretation. “Associated” should not be described as “exclusive.”
 
@@ -67,4 +72,3 @@ Machine-readable citation metadata are provided in [CITATION.cff](CITATION.cff).
 ## License
 
 This project is released under the [MIT License](LICENSE).
-
